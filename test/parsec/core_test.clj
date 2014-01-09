@@ -126,4 +126,47 @@
                       "bc edf")))
     (is (thrown? Exception
                  (run (times 2 (regex #"[a-z]+"))
-                      "bc 2 edf")))))
+                      "bc 2 edf"))))
+
+  (testing "test eof"
+    (is (thrown? Exception
+          (run (>> (string "bc") (eof))
+               "bc edf 1 2")))
+    (is (nil?
+          (run (>> (string "bc") (eof))
+               "bc"))))
+
+  (testing "test >+"
+    (is (=
+          (count (run (>+ (regex #"[a-z]+"))
+                      "bc edf 1 2")))
+        2)
+    (is (thrown? Exception
+          (run (>+ (regex #"[a-z]+"))
+                      "1 a 1 bc edf 1 2")))
+    (is (=
+          (count (run (>+ (regex #"[a-z]+"))
+                      "a 1 bc edf 1 2")))
+        1))
+
+  (testing "test >>-"
+    (is (=
+          (count (run (>>- (regex #"[a-z]+") (string "edf"))
+                      "bc edf 1 2"))
+          2))
+    (is (=
+          (count (run (>>- (regex #"[a-z]+")
+                           (string "edf")
+                           (eof))
+                      "bc edf"))
+          2))
+    (is (=
+          (count (run (>>- (regex #"[a-z]+")
+                           (string "edf")
+                           (regex #"[0-9]+"))
+                      "bc edf 12"))
+          3))
+    (is (thrown? Exception
+           (run (>>- (regex #"[a-z]+")
+                     (string "c"))
+                "a 1 bc edf 1 2")))))

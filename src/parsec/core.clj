@@ -23,6 +23,19 @@
   (fn [remainTokens cok cerr eok eerr]
     (eerr errmsg)))
 
+(defn eof
+  "matches EOF"
+  []
+  (fn [remainTokens cok cerr eok eerr]
+    (if-not (empty? remainTokens)
+      (let [item (first remainTokens)]
+        (eerr (ErrMsg. (str "expecting EOF, but got '"
+                            (:item item)
+                            "'")
+                       (:lineno item)
+                       (:columnno item))))
+      (eok nil remainTokens))))
+
 (defn token
   "consume a single item from the remainTokens failed if either the
   item consume? returns nil or if the input is empty"
@@ -98,10 +111,8 @@
   []
   (fn [remainTokens cok cerr eok eerr]
     (letfn [(pcok [item _]
-              (eok item remainTokens))
-            (pcerr [msg]
-              (eerr msg))]
-      ((any) remainTokens pcok pcerr eok eerr))))
+              (eok item remainTokens))]
+      ((any) remainTokens pcok cerr eok eerr))))
 
 (defmacro let->>
   "expands into nested bind forms"
@@ -125,8 +136,15 @@
     (>or
       (let->> [x safe-p
                xs (>* safe-p)]
-              (always (cons x xs)))
+        (always (cons x xs)))
       (always []))))
+
+(defn >+
+  "consume 1 or more p"
+  [p]
+  (let->> [head p
+           rst (>* p)]
+    (always (cons head rst))))
 
 (defn >?
   "optionally consume p"
@@ -168,6 +186,22 @@
   ([m] m)
   ([m n] `(nxt ~m ~n))
   ([m n & ms] `(nxt ~m (>> ~n ~@ms))))
+
+(defn nxt-bind
+  "parser p and q, returning cons of p's value and q's"
+  [p q]
+  (bind p (fn [p-item]
+            (let->> [q-item q]
+              (always (cons p-item (if (or (seq? q-item)
+                                           (nil? q-item))
+                                     q-item
+                                     (list q-item))))))))
+
+(defmacro >>-
+  "expands into nested nxt-bind forms, return list of result"
+  ([m] m)
+  ([m n] `(nxt-bind ~m ~n))
+  ([m n & ms] `(nxt-bind ~m (>>- ~n ~@ms))))
 
 (defmacro defparser
   "Defines a new parser. Parsers are simply functions that accept the
