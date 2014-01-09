@@ -271,6 +271,8 @@
     (is (let [result (c-tokenizer "2.2 a")]
           (and (= (:item (first result)) "2.2")
                (= (count result) 2))))
+    (is (thrown? TokenizeException
+          (doall (c-tokenizer "a b c {"))))
 ;    (is (let [result (c-tokenizer "//c\\\na\nb")]
 ;          (and (= (:item (first result)) "b")
 ;               (= (count result) 1))))

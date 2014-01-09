@@ -298,29 +298,32 @@
                                                   (list m (if m
                                                             (.end x)
                                                             nil))))))))]
-       (let [matches (first first-matches)
-             end (second first-matches)
-             result (.substring input-str 0 end)
-             rest-str (.substring input-str end)
-             lineno-inc (reduce (fn [acc cur]
-                                  (if (= cur \newline)
-                                    (inc acc) acc))
-                                0
-                                result)
-             columnno-inc (count (take-while #(not (= \newline %))
-                                             (reverse result)))]
-       (if matches
-         (cons (Token. result lineno columnno)
-               (lazy-seq (apply tokenizer (list rest-str
-                                                (+ lineno lineno-inc)
-                                                (if (= lineno-inc 0)
-                                                  (+ columnno columnno-inc)
-                                                  (+ 1 columnno-inc))
-                                                res))))
-         (throw (TokenizeException. (str "couldn't continue at "
-                                         lineno
-                                         ":"
-                                         columnno)))))))))
+       (let [matches (first first-matches)]
+         (if matches
+           (let [end (second first-matches)
+                 result (.substring input-str 0 end)
+                 rest-str (.substring input-str end)
+                 lineno-inc (reduce (fn [acc cur]
+                                      (if (= cur \newline)
+                                        (inc acc) acc))
+                                    0
+                                    result)
+                 columnno-inc (count (take-while #(not (= \newline %))
+                                                 (reverse result)))]
+             (cons (Token. result lineno columnno)
+                   (lazy-seq (apply tokenizer (list rest-str
+                                                    (+ lineno lineno-inc)
+                                                    (if (= lineno-inc 0)
+                                                      (+ columnno columnno-inc)
+                                                      (+ 1 columnno-inc))
+                                                    res)))))
+           (throw (TokenizeException. (str "couldn't continue tokenize when got '"
+                                           (first input-str)
+                                           "' at "
+                                           lineno
+                                           ":"
+                                           columnno)))))))))
+
 
 (defn c-tokenizer [input-str]
   (let [ws #"[ \t\v\n\r\f]"
@@ -334,7 +337,7 @@
                         #"(\d+\.\d+|\d+e\d+|\d+)" ;number
                         #"\"(\\.|[^\\\"])*\"" ;string
                         #"'(\\.|[^\\'])'" ;char-l
-                        block-c
+                        block-c ;block-c must preceding to op because "/*"
                         line-c
                         #"(=|\+|-|\*|/)" ; op
                         ws]))))
