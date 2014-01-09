@@ -1,6 +1,7 @@
 (ns parsec.core-test
   (:require [clojure.test :refer :all])
-  (:use parsec.core))
+  (:use parsec.core)
+  (:import [parsec.core Token]))
 
 (deftest test-buildin-parser
   (testing "test always"
@@ -170,3 +171,56 @@
            (run (>>- (regex #"[a-z]+")
                      (string "c"))
                 "a 1 bc edf 1 2")))))
+
+(deftest test-basic-usage
+  (def n (regex #"[0-9]+"))
+
+  (defparser atomExpr []
+    n)
+
+  (defparser multiExpr []
+    (let->> [a (atomExpr)]
+      (>or
+        (let->> [op (regex #"([*]|/)")
+                 b (atomExpr)]
+          (let [a (Long/valueOf (:item a))
+                op (:item op)
+                b (Long/valueOf (:item b))]
+            (always (Token. (if (= op "*")
+                              (* a b)
+                              (/ a b))
+                            1
+                            1))))
+        (always a))))
+
+  (defparser expr []
+    (let->> [a (multiExpr)]
+      (>or
+        (let->> [op (regex #"([+]|-)")
+                 b (multiExpr)]
+          (let [a (Long/valueOf (:item a))
+                op (:item op)
+                b (Long/valueOf (:item b))]
+            (always (Token. (if (= op "+")
+                              (+ a b)
+                              (- a b))
+                            1
+                            1))))
+        (always a))))
+
+
+  (defparser stats []
+    (let->> [item (expr)]
+      (always item)))
+
+  (defparser prog []
+     (let->> [result (>+ (stats))]
+       (eof)
+       (always result)))
+
+  (testing "test basic usage"
+    (is (=
+          (map :item (run (prog) "1 + 2 * 3\n2 + 3\n1 / 2"))
+          '(7 5 1/2)))
+    (is (thrown? Exception
+          (run (prog) "1+2*3\n2+3\n1/2")))))
