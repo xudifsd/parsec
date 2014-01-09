@@ -1,4 +1,5 @@
-(ns parsec.core)
+(ns parsec.core
+  (:import [parsec ParsecException]))
 
 (def ^:dynamic *white-spaces*
   "tokenize will use this global var, you could override it by binding"
@@ -7,8 +8,6 @@
 (defrecord Token [item lineno columnno])
 (defrecord Ok [item])
 (defrecord Err [errmsg])
-
-(defrecord ErrMsg [reason lineno columnno])
 
 ;; builtin parser
 (defn always
@@ -29,11 +28,9 @@
   (fn [remainTokens cok cerr eok eerr]
     (if-not (empty? remainTokens)
       (let [item (first remainTokens)]
-        (eerr (ErrMsg. (str "expecting EOF, but got '"
-                            (:item item)
-                            "'")
-                       (:lineno item)
-                       (:columnno item))))
+        (eerr (str "expecting EOF, but got '"
+                   (:item item)
+                   "'")))
       (eok nil remainTokens))))
 
 (defn token
@@ -42,15 +39,16 @@
   [consume?]
   (fn [remainTokens cok cerr eok eerr]
     (if (empty? remainTokens)
-      (eerr (ErrMsg. "unexpected EOF" 1 1))
+      (eerr "unexpected EOF")
       (let [token (first remainTokens)]
         (if (consume? token)
           (cok token (rest remainTokens))
-          (eerr (ErrMsg. (str "unexpected '"
-                              (:item token)
-                              "'")
-                         (:lineno token)
-                         (:columnno token))))))))
+          (eerr (str "unexpected '"
+                     (:item token)
+                     "' at "
+                     (:lineno token)
+                     ":"
+                     (:columnno token))))))))
 
 (defn string
   "consume given string"
@@ -71,11 +69,11 @@
   (fn [remainTokens cok cerr eok eerr]
     (letfn [(pcok [item remainTokens]
               (let [q (f item)]
-                (q remainTokens cok cerr cok cerr)))
+                #(q remainTokens cok cerr cok cerr)))
             (peok [item remainTokens]
               (let [q (f item)]
-                (q remainTokens cok cerr eok eerr)))]
-      (p remainTokens pcok cerr peok eerr))))
+                #(q remainTokens cok cerr eok eerr)))]
+      #(p remainTokens pcok cerr peok eerr))))
 
 (defn >or
   "take a sequence of parser, and try them in order"
@@ -83,11 +81,11 @@
    (fn [remainTokens cok cerr eok eerr]
      (letfn [(peerr [pErrMsg]
                (letfn [(qeerr [qErrMsg]
-                         (eerr (ErrMsg. "couldn't parse p or q"
-                                        (:lineno pErrMsg)
-                                        (:columnno pErrMsg))))]
-                 (q remainTokens cok cerr eok qeerr)))]
-       (p remainTokens cok cerr eok peerr))))
+                         (eerr (str pErrMsg
+                                    "\nand "
+                                    qErrMsg)))]
+                 #(q remainTokens cok cerr eok qeerr)))]
+       #(p remainTokens cok cerr eok peerr))))
 
   ([p q & more]
    (if (empty? more)
@@ -99,7 +97,7 @@
   return consumed input"
   [p]
   (fn [remainTokens cok cerr eok eerr]
-    (p remainTokens cok eerr eok eerr)))
+    #(p remainTokens cok eerr eok eerr)))
 
 (defn any
   "accept any token but EOF"
@@ -112,7 +110,7 @@
   (fn [remainTokens cok cerr eok eerr]
     (letfn [(pcok [item _]
               (eok item remainTokens))]
-      ((any) remainTokens pcok cerr eok eerr))))
+      #((any) remainTokens pcok cerr eok eerr))))
 
 (defmacro let->>
   "expands into nested bind forms"
@@ -132,7 +130,7 @@
                                            " parser that accepts an empty"
                                            " string"))))
           (safe-p [remainTokens cok cerr eok eerr]
-            (p remainTokens cok cerr many-err eerr))]
+            #(p remainTokens cok cerr many-err eerr))]
     (>or
       (let->> [x safe-p
                xs (>* safe-p)]
@@ -152,7 +150,7 @@
   (fn [remainTokens cok cerr eok eerr]
     (letfn [(peerr [_]
               (eok nil remainTokens))]
-    (p remainTokens cok cerr eok peerr))))
+    #(p remainTokens cok cerr eok peerr))))
 
 
 (defn times
@@ -162,7 +160,7 @@
         (always [])
 
         (< n 0)
-        (throw (RuntimeException. "time expectd n > 0"))
+        (throw (ParsecException. "times expecting n > 0"))
 
         :else
         (fn [remainTokens cok cerr eok eerr]
@@ -170,10 +168,10 @@
                     (let [q (times (dec n) p)]
                       (letfn [(qcok [items remainTokens]
                                 (cok (cons item items) remainTokens))]
-                        (q remainTokens qcok cerr qcok eerr))))
+                        #(q remainTokens qcok cerr qcok eerr))))
                   (peok [item remainTokens]
                     (eok (repeat n item) remainTokens))]
-            (p remainTokens pcok cerr peok eerr)))))
+            #(p remainTokens pcok cerr peok eerr)))))
 
 
 (defn nxt
@@ -211,7 +209,7 @@
   `(defn ~name ~args
      (fn [remainTokens# cok# cerr# eok# eerr#]
        (let [p# (>> ~@body)]
-         (p# remainTokens# cok# cerr# eok# eerr#)))))
+         #(p# remainTokens# cok# cerr# eok# eerr#)))))
 
 (defn tokenize
   "get string as args, tokenize it into list of Token, which contains
@@ -261,28 +259,25 @@
 (defn run-parser
   "Execute a parser p, given some tokens, Returns Ok or Err"
   [p tokens]
-  (p tokens
-     (fn cok [item _]
-       (Ok. item))
-     (fn cerr [err]
-       (Err. err))
-     (fn eok [item _]
-       (Ok. item))
-     (fn eerr [err]
-       (Err. err))))
+  (trampoline
+    #(p tokens
+        (fn cok [item _]
+          (Ok. item))
+        (fn cerr [err]
+          (Err. err))
+        (fn eok [item _]
+          (Ok. item))
+        (fn eerr [err]
+          (Err. err)))))
 
 (defn run
   "Run a parser p over input. The input should be string, if the parser
   produces an error, its message is wrapped in a RuntimeException and
   thrown, if the parser succeeds, its value is returned"
   [p input-str]
-  (let [result (run-parser p (tokenize input-str))]
+  (let [token-seq (tokenize input-str)
+        result (run-parser p token-seq)]
     (condp instance? result
       Ok (:item result)
       Err (let [msg (:errmsg result)]
-            (throw (RuntimeException. ^String
-                                      (str (:reason msg)
-                                           " at "
-                                           (:lineno msg)
-                                           ":"
-                                           (:columnno msg))))))))
+            (throw (ParsecException. ^String msg))))))

@@ -1,7 +1,8 @@
 (ns parsec.core-test
   (:require [clojure.test :refer :all])
   (:use parsec.core)
-  (:import [parsec.core Token]))
+  (:import [parsec.core Token]
+           [parsec ParsecException]))
 
 (deftest test-buildin-parser
   (testing "test always"
@@ -20,19 +21,19 @@
           "12")))
 
   (testing "test string"
-    (is (thrown? Exception
+    (is (thrown? ParsecException
           (run (string "a") "abc edf")))
     (is (=
           (:item (run (string "a") "a bc edf"))
           "a"))
-    (is (thrown? Exception
+    (is (thrown? ParsecException
                  (run (string "a") "12 41s"))))
 
   (testing "test regex"
     (is (=
           (:item (run (regex #"[a-z]+") "abc edf"))
           "abc"))
-    (is (thrown? Exception
+    (is (thrown? ParsecException
                  (run (regex #"[a-z]+") "12 41s"))))
 
   (testing "test >or"
@@ -48,7 +49,7 @@
                            (string "ghi"))
                       "abc edf"))
           "abc"))
-    (is (thrown? Exception
+    (is (thrown? ParsecException
                  (run (>or (string "abc")
                            (string "def")
                            (string "ghi"))
@@ -60,16 +61,16 @@
                           (string "def"))
                       "abc def"))
           "def"))
-    (is (thrown? Exception
+    (is (thrown? ParsecException
                  (run (>> (string "abc")
                           (string "def")
                           (string "ghi"))
                       "bc edf"))))
 
   (testing "test attempt"
-    (is (thrown? Exception
-                 (run (attempt (string "abc")
-                      "bc edf"))))
+    (is (thrown? ParsecException
+                 (run (attempt (string "abc"))
+                      "bc edf")))
     (is (=
           (:item (run (>or (attempt (string "abc"))
                            (string "def"))
@@ -122,15 +123,15 @@
           (count (run (times 2 (regex #"[a-z]+"))
                       "bc edf 1 2"))
           2))
-    (is (thrown? Exception
+    (is (thrown? ParsecException
                  (run (times -1 (regex #"[a-z]+"))
                       "bc edf")))
-    (is (thrown? Exception
+    (is (thrown? ParsecException
                  (run (times 2 (regex #"[a-z]+"))
                       "bc 2 edf"))))
 
   (testing "test eof"
-    (is (thrown? Exception
+    (is (thrown? ParsecException
           (run (>> (string "bc") (eof))
                "bc edf 1 2")))
     (is (nil?
@@ -142,7 +143,7 @@
           (count (run (>+ (regex #"[a-z]+"))
                       "bc edf 1 2")))
         2)
-    (is (thrown? Exception
+    (is (thrown? ParsecException
           (run (>+ (regex #"[a-z]+"))
                       "1 a 1 bc edf 1 2")))
     (is (=
@@ -167,7 +168,7 @@
                            (regex #"[0-9]+"))
                       "bc edf 12"))
           3))
-    (is (thrown? Exception
+    (is (thrown? ParsecException
            (run (>>- (regex #"[a-z]+")
                      (string "c"))
                 "a 1 bc edf 1 2")))))
@@ -220,7 +221,7 @@
 
   (testing "test basic usage"
     (is (=
-          (map :item (run (prog) "1 + 2 * 3\n2 + 3\n1 / 2"))
-          '(7 5 1/2)))
-    (is (thrown? Exception
+          (map :item (run (prog) "1 + 2 * 3\n2 * 2 + 3\n1 / 2"))
+          '(7 7 1/2)))
+    (is (thrown? ParsecException
           (run (prog) "1+2*3\n2+3\n1/2")))))
