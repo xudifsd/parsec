@@ -1,5 +1,5 @@
 (ns parsec.core
-  (:import [parsec ParsecException]))
+  (:import [parsec ParsecException TokenizeException]))
 
 (def ^:dynamic *white-spaces*
   "tokenize will use this global var, you could override it by binding"
@@ -211,10 +211,37 @@
        (let [p# (>> ~@body)]
          #(p# remainTokens# cok# cerr# eok# eerr#)))))
 
-(defn tokenize
+;;;;;;;;;;;;;;;;;;
+;; tokenize's util
+(defn ws-divider
+  "divide string once meet *white-spaces*, this divider is not useful
+  in real programming language, because it can't skip comment, and will
+  divide string literal if it contains white space, which is very common"
+  [cseq-before current-char]
+  (or (contains? *white-spaces* current-char) (nil? current-char)))
+
+(defn legacy-tokenize
   "get string as args, tokenize it into list of Token, which contains
-  item, lineno and columnno"
-  [input-str]
+  item, lineno and columnno, accept a function with two args, divide
+  token on return true, not divide on return false, if return 'discard
+  discard current-str(is useful when tokenize comment)"
+  [input-str divide?]
+
+  (defn inc-lineno [is-newline lineno]
+    (if is-newline
+      (inc lineno)
+      lineno))
+
+  (defn inc-columnno [is-newline columnno]
+    (if is-newline
+      1
+      (inc columnno)))
+
+  (defn newToken [current-str lineno columnno]
+    (Token. (apply str current-str)
+            lineno
+            (- columnno (count current-str))))
+
   (filter #(> (count (:item %)) 0)
           (loop [cseq (seq input-str)
                  result []
@@ -224,36 +251,93 @@
             (let [c (first cseq)
                   crest (rest cseq)
                   is-newline (= c \newline)]
-              (cond (empty? cseq)
-                    (conj result
-                          (Token. (apply str current-str)
-                                  lineno
-                                  (- columnno (count current-str))))
+              (if (empty? cseq)
+                (let [value (divide? current-str nil)]
+                  (if value
+                    (conj result (newToken current-str lineno columnno))
+                    (throw (TokenizeException. (str "divide? returns '"
+                                                    value
+                                                    "' in EOF")))))
+                (let [value (divide? current-str c)]
+                  (case value
+                    ;; divide
+                    true (recur crest
+                                (conj result (newToken current-str lineno columnno))
+                                []
+                                (inc-lineno is-newline lineno)
+                                (inc-columnno is-newline columnno))
 
-                    (contains? *white-spaces* c)
-                    (recur crest
-                           (conj result
-                                 (Token. (apply str current-str)
+                    ;; not divide
+                    false (recur crest
+                                 result
+                                 (conj current-str c)
+                                 (inc-lineno is-newline lineno)
+                                 (inc-columnno is-newline columnno))
+
+                    ;; discard current-str
+                    'discard (recur crest
+                                    result
+                                    []
+                                    (inc-lineno is-newline lineno)
+                                    (inc-columnno is-newline columnno)))))))))
+
+(defn tokenizer
+  "accept bunch of regex, return lazy seq of token that matches one of regex"
+  ([input-str res]
+   (tokenizer input-str 1 1 res))
+
+  ([input-str lineno columnno res]
+   (if (= "" input-str)
+     nil
+     (let [first-matches (first
+                           (drop-while #(not (first %))
+                                       (->> res
+                                         (map #(.matcher % input-str))
+                                         (map (fn [x]
+                                                (let [m (.lookingAt x)]
+                                                  (list m (if m
+                                                            (.end x)
+                                                            nil))))))))]
+       (let [matches (first first-matches)
+             end (second first-matches)
+             result (.substring input-str 0 end)
+             rest-str (.substring input-str end)
+             lineno-inc (reduce (fn [acc cur]
+                                  (if (= cur \newline)
+                                    (inc acc) acc))
+                                0
+                                result)
+             columnno-inc (count (take-while #(not (= \newline %))
+                                             (reverse result)))]
+       (if matches
+         (cons (Token. result lineno columnno)
+               (lazy-seq (apply tokenizer (list rest-str
+                                                (+ lineno lineno-inc)
+                                                (if (= lineno-inc 0)
+                                                  (+ columnno columnno-inc)
+                                                  (+ 1 columnno-inc))
+                                                res))))
+         (throw (TokenizeException. (str "couldn't continue at "
                                          lineno
-                                         (- columnno (count current-str))))
-                           []
-                           (if is-newline
-                             (inc lineno)
-                             lineno)
-                           (if is-newline
-                             1
-                             (inc columnno)))
+                                         ":"
+                                         columnno)))))))))
 
-                    :else
-                    (recur crest
-                           result
-                           (conj current-str c)
-                           (if is-newline
-                             (inc lineno)
-                             lineno)
-                           (if is-newline
-                             1
-                             (inc columnno))))))))
+(defn c-tokenizer [input-str]
+  (let [ws #"[ \t\v\n\r\f]"
+        block-c #"\/\*(\*(?!\/)|[^*])*\*\/"
+        line-c #"//.*"]
+    (filter #(not (or (.matches (.matcher ws (:item %)))
+                      (.matches (.matcher block-c (:item %)))
+                      (.matches (.matcher line-c (:item %)))))
+            (tokenizer input-str
+                       [#"[a-zA-Z_][0-9a-zA-Z_]*" ;id
+                        #"(\d+\.\d+|\d+e\d+|\d+)" ;number
+                        #"\"(\\.|[^\\\"])*\"" ;string
+                        #"'(\\.|[^\\'])'" ;char-l
+                        block-c
+                        line-c
+                        #"(=|\+|-|\*|/)" ; op
+                        ws]))))
 
 ;; run parsers
 (defn run-parser
@@ -274,10 +358,10 @@
   "Run a parser p over input. The input should be string, if the parser
   produces an error, its message is wrapped in a RuntimeException and
   thrown, if the parser succeeds, its value is returned"
-  [p input-str]
-  (let [token-seq (tokenize input-str)
-        result (run-parser p token-seq)]
-    (condp instance? result
-      Ok (:item result)
-      Err (let [msg (:errmsg result)]
-            (throw (ParsecException. ^String msg))))))
+  ([p input-str]
+   (let [token-seq (c-tokenizer input-str)
+         result (run-parser p token-seq)]
+     (condp instance? result
+       Ok (:item result)
+       Err (let [msg (:errmsg result)]
+             (throw (ParsecException. ^String msg)))))))

@@ -2,7 +2,7 @@
   (:require [clojure.test :refer :all])
   (:use parsec.core)
   (:import [parsec.core Token]
-           [parsec ParsecException]))
+           [parsec ParsecException TokenizeException]))
 
 (deftest test-buildin-parser
   (testing "test always"
@@ -223,5 +223,72 @@
     (is (=
           (map :item (run (prog) "1 + 2 * 3\n2 * 2 + 3\n1 / 2"))
           '(7 7 1/2)))
-    (is (thrown? ParsecException
-          (run (prog) "1+2*3\n2+3\n1/2")))))
+    (is (=
+          (map :item (run (prog) "1+2*3\n2+3\n1/2"))
+          '(7 5 1/2)))))
+
+(deftest test-ws-divider
+  (testing "test ws-divider"
+    (is (=
+          (count (legacy-tokenize "a b c" ws-divider))
+          3))
+    (is (=
+          (:item (first (legacy-tokenize "a b c" ws-divider)))
+          "a"))
+    (is (=
+          (count (legacy-tokenize "a b \tc\n\td" ws-divider))
+          4))))
+
+(deftest test-c-tokenizer
+  (testing "test c-tokenizer"
+    (is (=
+          (count (c-tokenizer "a b c/**/"))
+          3))
+    (is (=
+          (:item (first (c-tokenizer "ab b c/**/")))
+          "ab"))
+    (is (=
+          (:item (first (c-tokenizer "//abc\nefg")))
+          "efg"))
+    (is (let [result (c-tokenizer "'a'")]
+          (and (= (:item (first result)) "'a'")
+               (= (count result) 1))))
+    (is (let [result (c-tokenizer "1+2")]
+          (and (= (:item (first result)) "1")
+               (= (count result) 3))))
+    (is (let [result (c-tokenizer "/*a*/b")]
+          (and (= (:item (first result)) "b")
+               (= (count result) 1))))
+    (is (let [result (c-tokenizer "/*a\\*/b")]
+          (and (= (:item (first result)) "b")
+               (= (count result) 1))))
+    (is (let [result (c-tokenizer "/*a*\\/b*/c")]
+          (and (= (:item (first result)) "c")
+               (= (count result) 1))))
+    (is (let [result (c-tokenizer "//\na b")]
+          (and (= (:item (first result)) "a")
+               (= (count result) 2))))
+    (is (let [result (c-tokenizer "2.2 a")]
+          (and (= (:item (first result)) "2.2")
+               (= (count result) 2))))
+;    (is (let [result (c-tokenizer "//c\\\na\nb")]
+;          (and (= (:item (first result)) "b")
+;               (= (count result) 1))))
+;    (is (let [result (c-tokenizer "{a b c}")]
+;          (and (= (:item (first result)) "{")
+;               (= (count result) 5))))
+;    (is (let [result (c-tokenizer "a+\\\nb")]
+;          (and (= (:item (first result)) "a")
+;               (= (count result) 3))))
+;    (is (let [result (c-tokenizer "-2.2 a")]
+;          (and (= (:item (first result)) "-2.2")
+;               (= (count result) 2))))
+;    (is (thrown? TokenizeException
+;          (c-tokenizer "/*a b c")))
+;    (is (thrown? TokenizeException
+;          (c-tokenizer "'a\\''")))
+;    (is (thrown? TokenizeException
+;          (c-tokenizer "\"\\\""))) ;;"\"EOF
+;    (is (thrown? TokenizeException
+;          (c-tokenizer "/*a b c*")))
+           ))
